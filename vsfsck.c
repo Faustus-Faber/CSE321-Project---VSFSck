@@ -98,6 +98,12 @@ void fixDataBitmap(char *image);
 
 int main(int argc, char *argv[])
 {
+	if (argc != 2)
+	{
+		printf("Incorrect Usage.\nCorrect Format = %s <FILE.img>\n", argv[0]);
+		return 1;
+	}
+
 	if (validateSuperblock(argv[1]) > 0)
 	{
 		fixSuperBlock(argv[1]);
