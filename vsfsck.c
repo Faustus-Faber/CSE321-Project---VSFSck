@@ -1,8 +1,8 @@
-#include<stdio.h>
-#include<stdlib.h>
-#include<fcntl.h>
-#include<unistd.h>
-#include<stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdint.h>
 
 #define BLOCKSIZE 4096
 #define TOTALBLOCKS 64
@@ -15,9 +15,9 @@
 #define LASTDATABLOCKNUM 63
 #define NUMDATABLOCKSFS (LASTDATABLOCKNUM - FIRSTDATABLOCKNUM + 1)
 #define INODESIZE 256
-#define INODECOUNT ((INODETABNUMBLOCKS*BLOCKSIZE)/INODESIZE)
+#define INODECOUNT ((INODETABNUMBLOCKS * BLOCKSIZE) / INODESIZE)
 #define MAGICNUM 0xD34D
-#define POINTERSPBLOCK (BLOCKSIZE/sizeof(uint32_t))
+#define POINTERSPBLOCK (BLOCKSIZE / sizeof(uint32_t))
 
 int referencedByAnyInode[TOTALBLOCKS];
 int referencedByValidInode[TOTALBLOCKS];
@@ -40,7 +40,8 @@ int referencedByValidInode[TOTALBLOCKS];
  * - validateDataBitmap: Validates data bitmap consistency
  * - fixDataBitmap: Fixes errors in the data bitmap
  */
-typedef struct{
+typedef struct
+{
 	uint16_t magicByte;
 	uint32_t blockSize;
 	uint32_t totalBlocks;
@@ -53,7 +54,8 @@ typedef struct{
 	unsigned char reserved[4058];
 } Superblock;
 
-typedef struct{
+typedef struct
+{
 	uint32_t mode;
 	uint32_t uid;
 	uint32_t gid;
@@ -71,82 +73,97 @@ typedef struct{
 	unsigned char reserved[156];
 } Inode;
 
-void readBlock(int fd, uint32_t blockNum, unsigned char* buffer){
-	lseek(fd,blockNum*BLOCKSIZE,SEEK_SET);
-	read(fd,buffer,BLOCKSIZE);
+void readBlock(int fd, uint32_t blockNum, unsigned char *buffer)
+{
+	lseek(fd, blockNum * BLOCKSIZE, SEEK_SET);
+	read(fd, buffer, BLOCKSIZE);
 }
-void writeBlock(int fd, uint32_t blockNum, unsigned char* buffer){
-	lseek(fd,blockNum*BLOCKSIZE,SEEK_SET);
-	write(fd,buffer,BLOCKSIZE);
+void writeBlock(int fd, uint32_t blockNum, unsigned char *buffer)
+{
+	lseek(fd, blockNum * BLOCKSIZE, SEEK_SET);
+	write(fd, buffer, BLOCKSIZE);
 }
-int bitCheck(const unsigned char* bitMap, int bitIndex){
-	int byteIndex = bitIndex/8;
-	int bitOffset = bitIndex%8;
-	
+int bitCheck(const unsigned char *bitMap, int bitIndex)
+{
+	int byteIndex = bitIndex / 8;
+	int bitOffset = bitIndex % 8;
+
 	int isSet = 0;
-	if((bitMap[byteIndex] >> bitOffset) & 1){
+	if ((bitMap[byteIndex] >> bitOffset) & 1)
+	{
 		isSet = 1;
 		return isSet;
 	}
 	return isSet;
 }
 
-void setBit(unsigned char* bitMap, int bitIndex){
-	int byteIndex = bitIndex/8;
-	int bitOffset = bitIndex%8;
-	bitMap[byteIndex] |= (1<<bitOffset);
+void setBit(unsigned char *bitMap, int bitIndex)
+{
+	int byteIndex = bitIndex / 8;
+	int bitOffset = bitIndex % 8;
+	bitMap[byteIndex] |= (1 << bitOffset);
 }
 
-void removeBit(unsigned char* bitMap, int bitIndex){
-	int byteIndex = bitIndex/8;
-        int bitOffset = bitIndex%8;
-	bitMap[byteIndex] &= ~(1<<bitOffset);
+void removeBit(unsigned char *bitMap, int bitIndex)
+{
+	int byteIndex = bitIndex / 8;
+	int bitOffset = bitIndex % 8;
+	bitMap[byteIndex] &= ~(1 << bitOffset);
 }
 
-
-int validateSuperblock(char *image){
-	int fd = open(image,O_RDONLY);
+int validateSuperblock(char *image)
+{
+	int fd = open(image, O_RDONLY);
 	Superblock *sbPTR = (Superblock *)malloc(sizeof(Superblock));
-	readBlock(fd,SUPERBLOCKNUM,(unsigned char *)sbPTR);
-	
-	printf("Validating superblock for image: %s\n",image);
+	readBlock(fd, SUPERBLOCKNUM, (unsigned char *)sbPTR);
+
+	printf("Validating superblock for image: %s\n", image);
 	printf("---------------------------------\n");
 	int error = 0;
 
-	if(sbPTR -> magicByte != MAGICNUM){
-		printf("Error: Superblock - Invalid magic number. Expected %X, GOT %X\n",MAGICNUM, sbPTR->magicByte);
+	if (sbPTR->magicByte != MAGICNUM)
+	{
+		printf("Error: Superblock - Invalid magic number. Expected %X, GOT %X\n", MAGICNUM, sbPTR->magicByte);
 		error++;
 	}
-	if(sbPTR -> blockSize != BLOCKSIZE){
-		printf("Error: Superblock - Invalid block size. Expected %u, GOT %u\n",BLOCKSIZE, sbPTR->blockSize);
-		error++;
-	}	
-	if(sbPTR -> totalBlocks != TOTALBLOCKS){
-		printf("Error: Superblock - Invalid total number of blocks. Expected %u, GOT %u\n",TOTALBLOCKS,sbPTR->totalBlocks);
+	if (sbPTR->blockSize != BLOCKSIZE)
+	{
+		printf("Error: Superblock - Invalid block size. Expected %u, GOT %u\n", BLOCKSIZE, sbPTR->blockSize);
 		error++;
 	}
-	if(sbPTR -> ibimBlock != INODEBIMBLOCKNUM){
-		printf("Error: Superblock - Invalid inode bitmap block number. Expected %u, GOT %u\n",INODEBIMBLOCKNUM,sbPTR->ibimBlock);
+	if (sbPTR->totalBlocks != TOTALBLOCKS)
+	{
+		printf("Error: Superblock - Invalid total number of blocks. Expected %u, GOT %u\n", TOTALBLOCKS, sbPTR->totalBlocks);
 		error++;
 	}
-	if(sbPTR -> dbimBlock != DATABIMBLOCKNUM){
-		printf("Error: Superblock - Invalid data bitmap block number. Expected %u, GOT %u\n",DATABIMBLOCKNUM,sbPTR->dbimBlock);
+	if (sbPTR->ibimBlock != INODEBIMBLOCKNUM)
+	{
+		printf("Error: Superblock - Invalid inode bitmap block number. Expected %u, GOT %u\n", INODEBIMBLOCKNUM, sbPTR->ibimBlock);
 		error++;
 	}
-	if(sbPTR -> itabStartBlock != INODETABSBLOCKNUM){
-		printf("Error: Superblock - Invalid inode start block number. Expected %u, GOT %u\n",INODETABSBLOCKNUM,sbPTR->itabStartBlock);
+	if (sbPTR->dbimBlock != DATABIMBLOCKNUM)
+	{
+		printf("Error: Superblock - Invalid data bitmap block number. Expected %u, GOT %u\n", DATABIMBLOCKNUM, sbPTR->dbimBlock);
 		error++;
 	}
-	if(sbPTR -> firstDataBlock != FIRSTDATABLOCKNUM){
-		printf("Error: Superblock - Invalid inode table start block number. Expected %u, GOT %u\n",FIRSTDATABLOCKNUM,sbPTR->firstDataBlock);
+	if (sbPTR->itabStartBlock != INODETABSBLOCKNUM)
+	{
+		printf("Error: Superblock - Invalid inode start block number. Expected %u, GOT %u\n", INODETABSBLOCKNUM, sbPTR->itabStartBlock);
 		error++;
 	}
-	if(sbPTR -> inodeSize != INODESIZE){
-		printf("Error: Superblock - Invalid inode size. Expected %u, GOT %u\n",INODESIZE,sbPTR->inodeSize);
+	if (sbPTR->firstDataBlock != FIRSTDATABLOCKNUM)
+	{
+		printf("Error: Superblock - Invalid inode table start block number. Expected %u, GOT %u\n", FIRSTDATABLOCKNUM, sbPTR->firstDataBlock);
 		error++;
 	}
-	if(sbPTR -> inodeCount != INODECOUNT){
-		printf("Error: Superblock - Invalid inode count. Expected %u, GOT %u\n",INODECOUNT,sbPTR->inodeCount);
+	if (sbPTR->inodeSize != INODESIZE)
+	{
+		printf("Error: Superblock - Invalid inode size. Expected %u, GOT %u\n", INODESIZE, sbPTR->inodeSize);
+		error++;
+	}
+	if (sbPTR->inodeCount != INODECOUNT)
+	{
+		printf("Error: Superblock - Invalid inode count. Expected %u, GOT %u\n", INODECOUNT, sbPTR->inodeCount);
 		error++;
 	}
 	printf("---------------------------------\n");
@@ -156,134 +173,157 @@ int validateSuperblock(char *image){
 	return error;
 }
 
-void fixSuperBlock(char *image){
+void fixSuperBlock(char *image)
+{
 	int fd = open(image, O_WRONLY);
 	Superblock *sbPTR = (Superblock *)malloc(sizeof(Superblock));
 	sbPTR->magicByte = MAGICNUM;
-    	sbPTR->blockSize = BLOCKSIZE;
-    	sbPTR->totalBlocks = TOTALBLOCKS;
-    	sbPTR->ibimBlock = INODEBIMBLOCKNUM;
-    	sbPTR->dbimBlock = DATABIMBLOCKNUM;
-   	sbPTR->itabStartBlock = INODETABSBLOCKNUM;
-   	sbPTR->firstDataBlock = FIRSTDATABLOCKNUM;
-    	sbPTR->inodeSize = INODESIZE;
-    	sbPTR->inodeCount = INODECOUNT;
+	sbPTR->blockSize = BLOCKSIZE;
+	sbPTR->totalBlocks = TOTALBLOCKS;
+	sbPTR->ibimBlock = INODEBIMBLOCKNUM;
+	sbPTR->dbimBlock = DATABIMBLOCKNUM;
+	sbPTR->itabStartBlock = INODETABSBLOCKNUM;
+	sbPTR->firstDataBlock = FIRSTDATABLOCKNUM;
+	sbPTR->inodeSize = INODESIZE;
+	sbPTR->inodeCount = INODECOUNT;
 
-	writeBlock(fd,0,(unsigned char*)sbPTR);
+	writeBlock(fd, 0, (unsigned char *)sbPTR);
 	close(fd);
 	free(sbPTR);
 	printf("Fixed all the errors regarding Superblock. Please rerun the checker to ensure!\n");
-
 }
 
-void markDataBlockReference(uint32_t inodeNum, uint32_t dataBlockAddress, int isCurrentInodeValid){
-	if(dataBlockAddress == 0){
+void markDataBlockReference(uint32_t inodeNum, uint32_t dataBlockAddress, int isCurrentInodeValid)
+{
+	if (dataBlockAddress == 0)
+	{
 		return;
 	}
-	if(dataBlockAddress < FIRSTDATABLOCKNUM || dataBlockAddress > LASTDATABLOCKNUM){
+	if (dataBlockAddress < FIRSTDATABLOCKNUM || dataBlockAddress > LASTDATABLOCKNUM)
+	{
 		printf("Error: Bad data block pointer. Address: %u. Out of valid data range.\n", dataBlockAddress);
 		return;
 	}
 	referencedByAnyInode[dataBlockAddress] = 1;
-	if(isCurrentInodeValid){
+	if (isCurrentInodeValid)
+	{
 		referencedByValidInode[dataBlockAddress] = 1;
 	}
-
 }
 
-void processIndirectBPointers(int fd, uint32_t inodeNum, uint32_t indirectBlockAddress, int level, int isCurrentInodeValid){
-        if(indirectBlockAddress == 0){
-                return;
-        }
-        if(indirectBlockAddress < FIRSTDATABLOCKNUM || indirectBlockAddress > LASTDATABLOCKNUM){
-                printf("Error: Bad data block pointer. Address: %u. Out of valid data range.\n",indirectBlockAddress);
-				return;
-        }
-	
-	uint32_t* pointers = (uint32_t *)malloc(BLOCKSIZE);
-	readBlock(fd,indirectBlockAddress,(unsigned char*) pointers);
-	for(int i = 0; i<POINTERSPBLOCK; i++){
+void processIndirectBPointers(int fd, uint32_t inodeNum, uint32_t indirectBlockAddress, int level, int isCurrentInodeValid)
+{
+	if (indirectBlockAddress == 0)
+	{
+		return;
+	}
+	if (indirectBlockAddress < FIRSTDATABLOCKNUM || indirectBlockAddress > LASTDATABLOCKNUM)
+	{
+		printf("Error: Bad data block pointer. Address: %u. Out of valid data range.\n", indirectBlockAddress);
+		return;
+	}
+
+	uint32_t *pointers = (uint32_t *)malloc(BLOCKSIZE);
+	readBlock(fd, indirectBlockAddress, (unsigned char *)pointers);
+	for (int i = 0; i < POINTERSPBLOCK; i++)
+	{
 		uint32_t nextAddress = pointers[i];
-		if(nextAddress == 0){
+		if (nextAddress == 0)
+		{
 			continue;
 		}
-		if(level == 1){
+		if (level == 1)
+		{
 			markDataBlockReference(inodeNum, nextAddress, isCurrentInodeValid);
 		}
-		else{
-			processIndirectBPointers(fd,inodeNum,nextAddress,level-1,isCurrentInodeValid);
+		else
+		{
+			processIndirectBPointers(fd, inodeNum, nextAddress, level - 1, isCurrentInodeValid);
 		}
 	}
 	free(pointers);
 }
 
-void collectBlocksForInode(int fd, uint32_t inodeNum, Inode* currentInode){
-	int isInodeValid = (currentInode->numHardLinks>0 && currentInode->deletionTime == 0);
-	if(currentInode->numDataBlocksAllocated == 0 && !isInodeValid){
+void collectBlocksForInode(int fd, uint32_t inodeNum, Inode *currentInode)
+{
+	int isInodeValid = (currentInode->numHardLinks > 0 && currentInode->deletionTime == 0);
+	if (currentInode->numDataBlocksAllocated == 0 && !isInodeValid)
+	{
 		return;
 	}
 
-	for(int i = 0; i<12; i++){
-		markDataBlockReference(inodeNum, currentInode -> directPointer[i], isInodeValid);
+	for (int i = 0; i < 12; i++)
+	{
+		markDataBlockReference(inodeNum, currentInode->directPointer[i], isInodeValid);
 	}
 
-	if(currentInode -> singleIndirectPointer != 0){
-		processIndirectBPointers(fd,inodeNum,currentInode->singleIndirectPointer,1,isInodeValid);
+	if (currentInode->singleIndirectPointer != 0)
+	{
+		processIndirectBPointers(fd, inodeNum, currentInode->singleIndirectPointer, 1, isInodeValid);
 	}
-	if(currentInode -> doubleIndirectPointer != 0){
-		processIndirectBPointers(fd,inodeNum,currentInode->doubleIndirectPointer,2,isInodeValid);
+	if (currentInode->doubleIndirectPointer != 0)
+	{
+		processIndirectBPointers(fd, inodeNum, currentInode->doubleIndirectPointer, 2, isInodeValid);
 	}
-	if(currentInode -> tripleIndirectPointer != 0){
-		processIndirectBPointers(fd,inodeNum,currentInode->tripleIndirectPointer,3,isInodeValid);
+	if (currentInode->tripleIndirectPointer != 0)
+	{
+		processIndirectBPointers(fd, inodeNum, currentInode->tripleIndirectPointer, 3, isInodeValid);
 	}
 }
 
-int validateDataBitmap(char *image){
+int validateDataBitmap(char *image)
+{
 	int fd = open(image, O_RDONLY);
 	Superblock *sbPTR = (Superblock *)malloc(sizeof(Superblock));
-	readBlock(fd,SUPERBLOCKNUM,(unsigned char *)sbPTR);
+	readBlock(fd, SUPERBLOCKNUM, (unsigned char *)sbPTR);
 	printf("Validating Data Bitmap\n");
 	printf("---------------------------------\n");
-	
-	int error = 0;
-	
-	unsigned char dataBitmap[BLOCKSIZE];
-	readBlock(fd,sbPTR->dbimBlock,dataBitmap);
-	
-	unsigned char blockBuffer[BLOCKSIZE];
-	readBlock(fd,sbPTR->ibimBlock,blockBuffer);
-	Inode* currentInodePTR;
-	uint32_t inodesPerBlock = sbPTR->blockSize/sbPTR->inodeSize;
 
-	for(uint32_t i=0; i<INODETABNUMBLOCKS; i++){
+	int error = 0;
+
+	unsigned char dataBitmap[BLOCKSIZE];
+	readBlock(fd, sbPTR->dbimBlock, dataBitmap);
+
+	unsigned char blockBuffer[BLOCKSIZE];
+	readBlock(fd, sbPTR->ibimBlock, blockBuffer);
+	Inode *currentInodePTR;
+	uint32_t inodesPerBlock = sbPTR->blockSize / sbPTR->inodeSize;
+
+	for (uint32_t i = 0; i < INODETABNUMBLOCKS; i++)
+	{
 		uint32_t currentInodeTableBlockNum = sbPTR->itabStartBlock + i;
-		readBlock(fd,currentInodeTableBlockNum, blockBuffer);
-		for(uint32_t j = 0; j<inodesPerBlock; j++){
-			uint32_t currentInodeNum = (i * inodesPerBlock) +j;
-			currentInodePTR = (Inode *) ((blockBuffer+(j*sbPTR->inodeSize)));
-			collectBlocksForInode(fd,currentInodeNum, currentInodePTR);
+		readBlock(fd, currentInodeTableBlockNum, blockBuffer);
+		for (uint32_t j = 0; j < inodesPerBlock; j++)
+		{
+			uint32_t currentInodeNum = (i * inodesPerBlock) + j;
+			currentInodePTR = (Inode *)((blockBuffer + (j * sbPTR->inodeSize)));
+			collectBlocksForInode(fd, currentInodeNum, currentInodePTR);
 		}
 	}
 
 	printf("Checking Rule a: Bitmap used and referenced by valid inode\n");
-	for(uint32_t i = 0; i<NUMDATABLOCKSFS; i++){
+	for (uint32_t i = 0; i < NUMDATABLOCKSFS; i++)
+	{
 		uint32_t actualBlockNum = sbPTR->firstDataBlock + i;
-		if(bitCheck(dataBitmap,i)){
-			if(!referencedByValidInode[actualBlockNum]){
-				printf("Error Rule a: Block %u (bitmap bit %u) is Used in bitmap, but not referenced by any valid inode.\n",actualBlockNum,i);
+		if (bitCheck(dataBitmap, i))
+		{
+			if (!referencedByValidInode[actualBlockNum])
+			{
+				printf("Error Rule a: Block %u (bitmap bit %u) is Used in bitmap, but not referenced by any valid inode.\n", actualBlockNum, i);
 				error++;
 			}
-
 		}
-		
 	}
 
 	printf("Checking Rule b: Referenced by any inode and bitmap used\n");
-	for(uint32_t i = sbPTR->firstDataBlock; i<=LASTDATABLOCKNUM; i++){
-		if(referencedByAnyInode[i]){
-			int bitmapBitIndex = i  - sbPTR->firstDataBlock;
-			if(!bitCheck(dataBitmap,bitmapBitIndex)){
-				printf("Error Rule b: Block %u (bitmap bit %u) is referenced by an inode, but not marked used in data bitmap.\n",i,bitmapBitIndex);
+	for (uint32_t i = sbPTR->firstDataBlock; i <= LASTDATABLOCKNUM; i++)
+	{
+		if (referencedByAnyInode[i])
+		{
+			int bitmapBitIndex = i - sbPTR->firstDataBlock;
+			if (!bitCheck(dataBitmap, bitmapBitIndex))
+			{
+				printf("Error Rule b: Block %u (bitmap bit %u) is referenced by an inode, but not marked used in data bitmap.\n", i, bitmapBitIndex);
 				error++;
 			}
 		}
@@ -294,52 +334,63 @@ int validateDataBitmap(char *image){
 	return error;
 }
 
-void fixDataBitmap(char *image){
+void fixDataBitmap(char *image)
+{
 	int fd = open(image, O_RDWR);
 	Superblock *sbPTR = (Superblock *)malloc(sizeof(Superblock));
-	readBlock(fd,SUPERBLOCKNUM,(unsigned char *)sbPTR);
+	readBlock(fd, SUPERBLOCKNUM, (unsigned char *)sbPTR);
 
 	unsigned char dataBitmap[BLOCKSIZE];
-	readBlock(fd,sbPTR->dbimBlock,dataBitmap);
+	readBlock(fd, sbPTR->dbimBlock, dataBitmap);
 
-	for(uint32_t i = 0; i<NUMDATABLOCKSFS; i++){
+	for (uint32_t i = 0; i < NUMDATABLOCKSFS; i++)
+	{
 		uint32_t actualBlockNum = sbPTR->firstDataBlock + i;
-		if(bitCheck(dataBitmap,i)){
-			if(!referencedByValidInode[actualBlockNum]){
-				removeBit(dataBitmap,i);
+		if (bitCheck(dataBitmap, i))
+		{
+			if (!referencedByValidInode[actualBlockNum])
+			{
+				removeBit(dataBitmap, i);
 			}
 		}
-		else{
-			if(referencedByAnyInode[actualBlockNum]){
-				setBit(dataBitmap,i);
+		else
+		{
+			if (referencedByAnyInode[actualBlockNum])
+			{
+				setBit(dataBitmap, i);
 			}
 		}
 	}
 
-	writeBlock(fd,sbPTR->dbimBlock,dataBitmap);
+	writeBlock(fd, sbPTR->dbimBlock, dataBitmap);
 	free(sbPTR);
 	close(fd);
 	printf("Fixed all the errors regarding Data Bitmap. Please rerun the checker to ensure!\n");
 }
 
-int main(int argc, char *argv[]){
-	if(validateSuperblock(argv[1])>0){
+int main(int argc, char *argv[])
+{
+	if (validateSuperblock(argv[1]) > 0)
+	{
 		fixSuperBlock(argv[1]);
 		printf("---------------------------------\n");
 		printf("\n");
 	}
-	else{
+	else
+	{
 		printf("Superblock validation successful. No errors found.\n");
 		printf("---------------------------------\n");
 		printf("\n");
 	}
-	if(validateDataBitmap(argv[1])>0){
+	if (validateDataBitmap(argv[1]) > 0)
+	{
 		printf("Data bitmap validation failed. Fixing errors...\n");
 		fixDataBitmap(argv[1]);
 		printf("---------------------------------\n");
 		printf("\n");
 	}
-	else{
+	else
+	{
 		printf("Data bitmap validation successful. No errors found.\n");
 		printf("---------------------------------\n");
 		printf("\n");
