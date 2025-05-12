@@ -51,10 +51,10 @@ typedef struct
 	uint16_t magicByte;
 	uint32_t blockSize;
 	uint32_t totalBlocks;
-	uint32_t ibimBlock;
-	uint32_t dbimBlock;
-	uint32_t itabStartBlock;
-	uint32_t firstDataBlock;
+	uint32_t ibimBlock;		 // inode bitmap block number
+	uint32_t dbimBlock;		 // data bitmap block number
+	uint32_t itabStartBlock; // inode table start block number
+	uint32_t firstDataBlock; // first data block number
 	uint32_t inodeSize;
 	uint32_t inodeCount;
 	unsigned char reserved[4058];
@@ -93,6 +93,8 @@ void processIndirectBPointers(int fd, uint32_t inodeNum, uint32_t indirectBlockA
 void collectBlocksForInode(int fd, uint32_t inodeNum, Inode *currentInode);
 int validateDataBitmap(char *image);
 void fixDataBitmap(char *image);
+int validateInodeBitmap(char *image);
+void fixInodeBitmap(char *image);
 
 // ? ############################## MAIN FUNCTION ##############################
 
@@ -104,8 +106,10 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
+	// ! FARHAN ZARIF
 	if (validateSuperblock(argv[1]) > 0)
 	{
+		printf("Superblock validation failed. Fixing errors...\n");
 		fixSuperBlock(argv[1]);
 		printf("---------------------------------\n");
 		printf("\n");
@@ -116,6 +120,23 @@ int main(int argc, char *argv[])
 		printf("---------------------------------\n");
 		printf("\n");
 	}
+
+	// ! Al- Saihan Tajvi
+	if (validateInodeBitmap(argv[1]) > 0)
+	{
+		printf("Inode bitmap validation failed. Fixing errors...\n");
+		fixInodeBitmap(argv[1]);
+		printf("---------------------------------\n");
+		printf("\n");
+	}
+	else
+	{
+		printf("Inode bitmap validation successful. No errors found.\n");
+		printf("---------------------------------\n");
+		printf("\n");
+	}
+
+	// ! FARHAN ZARIF
 	if (validateDataBitmap(argv[1]) > 0)
 	{
 		printf("Data bitmap validation failed. Fixing errors...\n");
@@ -129,6 +150,9 @@ int main(int argc, char *argv[])
 		printf("---------------------------------\n");
 		printf("\n");
 	}
+
+	// ! Al- Saihan Tajvi
+
 	return 0;
 }
 
@@ -369,7 +393,7 @@ int validateDataBitmap(char *image)
 	unsigned char dataBitmap[BLOCKSIZE];
 	readBlock(fd, sbPTR->dbimBlock, dataBitmap);
 
-	unsigned char blockBuffer[BLOCKSIZE];
+	unsigned char blockBuffer[BLOCKSIZE]; // This is apparently the inode bitmap block
 	readBlock(fd, sbPTR->ibimBlock, blockBuffer);
 	Inode *currentInodePTR;
 	uint32_t inodesPerBlock = sbPTR->blockSize / sbPTR->inodeSize;
@@ -386,7 +410,7 @@ int validateDataBitmap(char *image)
 		}
 	}
 
-	printf("Checking Rule a: Bitmap used and referenced by valid inode\n");
+	printf("Checking Rule A: Bitmap used and referenced by valid inode\n");
 	for (uint32_t i = 0; i < NUMDATABLOCKSFS; i++)
 	{
 		uint32_t actualBlockNum = sbPTR->firstDataBlock + i;
@@ -400,7 +424,7 @@ int validateDataBitmap(char *image)
 		}
 	}
 
-	printf("Checking Rule b: Referenced by any inode and bitmap used\n");
+	printf("Checking Rule B: Referenced by any inode and bitmap used\n");
 	for (uint32_t i = sbPTR->firstDataBlock; i <= LASTDATABLOCKNUM; i++)
 	{
 		if (referencedByAnyInode[i])
@@ -453,4 +477,113 @@ void fixDataBitmap(char *image)
 	free(sbPTR);
 	close(fd);
 	printf("Fixed all the errors regarding Data Bitmap. Please rerun the checker to ensure!\n");
+}
+
+// ! ############################## Al- Saihan Tajvi ##############################
+
+// ? ############################## VALIDATE INODE BITMAP ##############################
+
+int validateInodeBitmap(char *image)
+{
+	int fd = open(image, O_RDONLY);
+	Superblock *sbPTR = (Superblock *)malloc(sizeof(Superblock));
+	readBlock(fd, SUPERBLOCKNUM, (unsigned char *)sbPTR);
+	printf("Validating Inode Bitmap\n");
+	printf("---------------------------------\n");
+
+	int error = 0;
+
+	unsigned char inodeBitmap[BLOCKSIZE];
+	readBlock(fd, sbPTR->ibimBlock, inodeBitmap);
+
+	unsigned char blockBuffer[BLOCKSIZE];
+	Inode *currentInodePTR;
+	uint32_t inodesPerBlock = sbPTR->blockSize / sbPTR->inodeSize;
+
+	printf("Check Rule A: Each bit set in the inode bitmap corresponds to a valid inode\n");
+	printf("Check Rule B: Every such inode is marked as used in the bitmap\n");
+	for (uint32_t i = 0; i < INODETABNUMBLOCKS; i++)
+	{
+		uint32_t currentInodeTableBlockNum = sbPTR->itabStartBlock + i;
+		readBlock(fd, currentInodeTableBlockNum, blockBuffer);
+
+		for (uint32_t j = 0; j < inodesPerBlock; j++)
+		{
+			uint32_t currentInodeNum = (i * inodesPerBlock) + j;
+			currentInodePTR = (Inode *)((blockBuffer + (j * sbPTR->inodeSize)));
+
+			int isInodeValid = (currentInodePTR->numHardLinks > 0 && currentInodePTR->deletionTime == 0);
+			int isMarkedInBitmap = bitCheck(inodeBitmap, currentInodeNum);
+
+			if (isMarkedInBitmap && !isInodeValid)
+			{
+				printf("Error: Inode %u is marked in bitmap but invalid (links=%u, del_time=%u)\n",
+					   currentInodeNum, currentInodePTR->numHardLinks, currentInodePTR->deletionTime);
+				error++;
+			}
+
+			if (isInodeValid && !isMarkedInBitmap)
+			{
+				printf("Error: Valid inode %u (links=%u) not marked in bitmap\n",
+					   currentInodeNum, currentInodePTR->numHardLinks);
+				error++;
+			}
+		}
+	}
+
+	printf("---------------------------------\n");
+	free(sbPTR);
+	close(fd);
+	return error;
+}
+
+// ? ############################## FIX INODE BITMAP ##############################
+
+void fixInodeBitmap(char *image)
+{
+	int fd = open(image, O_RDWR);
+	Superblock *sbPTR = (Superblock *)malloc(sizeof(Superblock));
+	readBlock(fd, SUPERBLOCKNUM, (unsigned char *)sbPTR);
+
+	unsigned char inodeBitmap[BLOCKSIZE];
+	readBlock(fd, sbPTR->ibimBlock, inodeBitmap);
+
+	// Scan all inodes to fix both types of errors
+	unsigned char blockBuffer[BLOCKSIZE];
+	Inode *currentInodePTR;
+	uint32_t inodesPerBlock = sbPTR->blockSize / sbPTR->inodeSize;
+
+	for (uint32_t i = 0; i < INODETABNUMBLOCKS; i++)
+	{
+		uint32_t currentInodeTableBlockNum = sbPTR->itabStartBlock + i;
+		readBlock(fd, currentInodeTableBlockNum, blockBuffer);
+
+		for (uint32_t j = 0; j < inodesPerBlock; j++)
+		{
+			uint32_t currentInodeNum = (i * inodesPerBlock) + j;
+			currentInodePTR = (Inode *)((blockBuffer + (j * sbPTR->inodeSize)));
+
+			int isInodeValid = (currentInodePTR->numHardLinks > 0 && currentInodePTR->deletionTime == 0);
+			int isMarkedInBitmap = bitCheck(inodeBitmap, currentInodeNum);
+
+			// Fix Rule a:
+			if (isMarkedInBitmap && !isInodeValid)
+			{
+				removeBit(inodeBitmap, currentInodeNum);
+			}
+
+			// Fix Rule b:
+			if (isInodeValid && !isMarkedInBitmap)
+			{
+				setBit(inodeBitmap, currentInodeNum);
+			}
+		}
+	}
+
+	// final writing of the inode bitmap
+	writeBlock(fd, sbPTR->ibimBlock, inodeBitmap);
+
+	free(sbPTR);
+	close(fd);
+	printf("Fixed all inode bitmap errors. Please rerun the checker to verify.\n");
 }
