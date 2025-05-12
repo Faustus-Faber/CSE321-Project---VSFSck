@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include <stdint.h>
 
+// ? ############################## Defining Constants and Global Variables ##############################
+
 #define BLOCKSIZE 4096
 #define TOTALBLOCKS 64
 #define SUPERBLOCKNUM 0
@@ -23,6 +25,7 @@ int referencedByAnyInode[TOTALBLOCKS];
 int referencedByValidInode[TOTALBLOCKS];
 
 /*
+ ! PROJECT INFORMATION
  * Very Simple File System Checker (vsfsck)
  * Implemented features listed below by Farhan Zarif (23301692)
  *
@@ -40,6 +43,9 @@ int referencedByValidInode[TOTALBLOCKS];
  * - validateDataBitmap: Validates data bitmap consistency
  * - fixDataBitmap: Fixes errors in the data bitmap
  */
+
+// ? ############################## Defining Structs ##############################
+
 typedef struct
 {
 	uint16_t magicByte;
@@ -73,16 +79,73 @@ typedef struct
 	unsigned char reserved[156];
 } Inode;
 
+// ? ############################## Helper Functions References ##############################
+
+void readBlock(int fd, uint32_t blockNum, unsigned char *buffer);
+void writeBlock(int fd, uint32_t blockNum, unsigned char *buffer);
+int bitCheck(const unsigned char *bitMap, int bitIndex);
+void setBit(unsigned char *bitMap, int bitIndex);
+void removeBit(unsigned char *bitMap, int bitIndex);
+int validateSuperblock(char *image);
+void fixSuperBlock(char *image);
+void markDataBlockReference(uint32_t inodeNum, uint32_t dataBlockAddress, int isCurrentInodeValid);
+void processIndirectBPointers(int fd, uint32_t inodeNum, uint32_t indirectBlockAddress, int level, int isCurrentInodeValid);
+void collectBlocksForInode(int fd, uint32_t inodeNum, Inode *currentInode);
+int validateDataBitmap(char *image);
+void fixDataBitmap(char *image);
+
+// ? ############################## MAIN FUNCTION ##############################
+
+int main(int argc, char *argv[])
+{
+	if (validateSuperblock(argv[1]) > 0)
+	{
+		fixSuperBlock(argv[1]);
+		printf("---------------------------------\n");
+		printf("\n");
+	}
+	else
+	{
+		printf("Superblock validation successful. No errors found.\n");
+		printf("---------------------------------\n");
+		printf("\n");
+	}
+	if (validateDataBitmap(argv[1]) > 0)
+	{
+		printf("Data bitmap validation failed. Fixing errors...\n");
+		fixDataBitmap(argv[1]);
+		printf("---------------------------------\n");
+		printf("\n");
+	}
+	else
+	{
+		printf("Data bitmap validation successful. No errors found.\n");
+		printf("---------------------------------\n");
+		printf("\n");
+	}
+	return 0;
+}
+
+// ! ############################## Farhan Zarif ##############################
+
+// ? ############################## READ BLOCK ##############################
+
 void readBlock(int fd, uint32_t blockNum, unsigned char *buffer)
 {
 	lseek(fd, blockNum * BLOCKSIZE, SEEK_SET);
 	read(fd, buffer, BLOCKSIZE);
 }
+
+// ? ############################## WRITE BLOCK ##############################
+
 void writeBlock(int fd, uint32_t blockNum, unsigned char *buffer)
 {
 	lseek(fd, blockNum * BLOCKSIZE, SEEK_SET);
 	write(fd, buffer, BLOCKSIZE);
 }
+
+// ? ############################## BIT CHECK ##############################
+
 int bitCheck(const unsigned char *bitMap, int bitIndex)
 {
 	int byteIndex = bitIndex / 8;
@@ -97,6 +160,8 @@ int bitCheck(const unsigned char *bitMap, int bitIndex)
 	return isSet;
 }
 
+// ? ############################## SET BIT ##############################
+
 void setBit(unsigned char *bitMap, int bitIndex)
 {
 	int byteIndex = bitIndex / 8;
@@ -104,12 +169,16 @@ void setBit(unsigned char *bitMap, int bitIndex)
 	bitMap[byteIndex] |= (1 << bitOffset);
 }
 
+// ? ############################## REMOVE BIT ##############################
+
 void removeBit(unsigned char *bitMap, int bitIndex)
 {
 	int byteIndex = bitIndex / 8;
 	int bitOffset = bitIndex % 8;
 	bitMap[byteIndex] &= ~(1 << bitOffset);
 }
+
+// ? ############################## VALIDATE SUPERBLOCK ##############################
 
 int validateSuperblock(char *image)
 {
@@ -173,6 +242,8 @@ int validateSuperblock(char *image)
 	return error;
 }
 
+// ? ############################## FIX SUPERBLOCK ##############################
+
 void fixSuperBlock(char *image)
 {
 	int fd = open(image, O_WRONLY);
@@ -193,6 +264,8 @@ void fixSuperBlock(char *image)
 	printf("Fixed all the errors regarding Superblock. Please rerun the checker to ensure!\n");
 }
 
+// ? ############################## MARK DATA BLOCK REFERENCE ##############################
+
 void markDataBlockReference(uint32_t inodeNum, uint32_t dataBlockAddress, int isCurrentInodeValid)
 {
 	if (dataBlockAddress == 0)
@@ -210,6 +283,8 @@ void markDataBlockReference(uint32_t inodeNum, uint32_t dataBlockAddress, int is
 		referencedByValidInode[dataBlockAddress] = 1;
 	}
 }
+
+// ? ############################## PROCESS INDIRECT POINTERS ##############################
 
 void processIndirectBPointers(int fd, uint32_t inodeNum, uint32_t indirectBlockAddress, int level, int isCurrentInodeValid)
 {
@@ -244,6 +319,8 @@ void processIndirectBPointers(int fd, uint32_t inodeNum, uint32_t indirectBlockA
 	free(pointers);
 }
 
+// ? ############################## COLLECT BLOCKS FOR INODE ##############################
+
 void collectBlocksForInode(int fd, uint32_t inodeNum, Inode *currentInode)
 {
 	int isInodeValid = (currentInode->numHardLinks > 0 && currentInode->deletionTime == 0);
@@ -270,6 +347,8 @@ void collectBlocksForInode(int fd, uint32_t inodeNum, Inode *currentInode)
 		processIndirectBPointers(fd, inodeNum, currentInode->tripleIndirectPointer, 3, isInodeValid);
 	}
 }
+
+// ? ############################## VALIDATE DATA BITMAP ##############################
 
 int validateDataBitmap(char *image)
 {
@@ -334,6 +413,8 @@ int validateDataBitmap(char *image)
 	return error;
 }
 
+// ? ############################## FIX DATA BITMAP ##############################
+
 void fixDataBitmap(char *image)
 {
 	int fd = open(image, O_RDWR);
@@ -366,34 +447,4 @@ void fixDataBitmap(char *image)
 	free(sbPTR);
 	close(fd);
 	printf("Fixed all the errors regarding Data Bitmap. Please rerun the checker to ensure!\n");
-}
-
-int main(int argc, char *argv[])
-{
-	if (validateSuperblock(argv[1]) > 0)
-	{
-		fixSuperBlock(argv[1]);
-		printf("---------------------------------\n");
-		printf("\n");
-	}
-	else
-	{
-		printf("Superblock validation successful. No errors found.\n");
-		printf("---------------------------------\n");
-		printf("\n");
-	}
-	if (validateDataBitmap(argv[1]) > 0)
-	{
-		printf("Data bitmap validation failed. Fixing errors...\n");
-		fixDataBitmap(argv[1]);
-		printf("---------------------------------\n");
-		printf("\n");
-	}
-	else
-	{
-		printf("Data bitmap validation successful. No errors found.\n");
-		printf("---------------------------------\n");
-		printf("\n");
-	}
-	return 0;
 }
