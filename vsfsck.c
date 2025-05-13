@@ -96,7 +96,11 @@ void fixDataBitmap(char *image);
 int validateInodeBitmap(char *image);
 void fixInodeBitmap(char *image);
 int validateAndFixBlockPointers(char *image);
+int detectDuplicateBlocks(char *image);
+void processIndirectReferences(int fd, uint32_t indirectBlockAddress, int level, int *blockRefCount);
 
+// ! ############################## MAIN FUNCTION ##############################
+// * ############################## MAIN FUNCTION ##############################
 // ? ############################## MAIN FUNCTION ##############################
 
 int main(int argc, char *argv[])
@@ -163,6 +167,17 @@ int main(int argc, char *argv[])
 		printf("---------------------------------\n");
 		printf("\n");
 	}
+
+	// ! SADIK
+	if (detectDuplicateBlocks(argv[1]) > 0)
+	{
+		printf("Duplicate blocks were found (potential corruption)\n");
+	}
+	else
+	{
+		printf("No duplicate blocks found\n");
+	}
+
 	return 0;
 }
 
@@ -862,4 +877,117 @@ int validateAndFixBlockPointers(char *image)
 	free(sbPTR);
 	close(fd);
 	return error;
+}
+
+// ! ############################## Sadik Mina Dweep ##############################
+// ? ############################## DUPLICATE BLOCK DETECTOR ##############################
+
+int detectDuplicateBlocks(char *image)
+{
+	int fd = open(image, O_RDONLY);
+	Superblock *sbPTR = (Superblock *)malloc(sizeof(Superblock));
+	readBlock(fd, SUPERBLOCKNUM, (unsigned char *)sbPTR);
+
+	printf("Checking for duplicate blocks\n");
+	printf("---------------------------------\n");
+
+	int error = 0;
+	unsigned char blockBuffer[BLOCKSIZE];
+	Inode *currentInodePTR;
+	uint32_t inodesPerBlock = sbPTR->blockSize / sbPTR->inodeSize;
+
+	// Create a reference count array for all blocks
+	int *blockRefCount = calloc(TOTALBLOCKS, sizeof(int));
+
+	// First pass: Count references to each block
+	for (uint32_t i = 0; i < INODETABNUMBLOCKS; i++)
+	{
+		uint32_t currentInodeTableBlockNum = sbPTR->itabStartBlock + i;
+		readBlock(fd, currentInodeTableBlockNum, blockBuffer);
+
+		for (uint32_t j = 0; j < inodesPerBlock; j++)
+		{
+			currentInodePTR = (Inode *)((blockBuffer + (j * sbPTR->inodeSize)));
+
+			// Skip invalid inodes
+			if (currentInodePTR->numHardLinks == 0 || currentInodePTR->deletionTime != 0)
+			{
+				continue;
+			}
+
+			// Check direct pointers
+			for (int k = 0; k < 12; k++)
+			{
+				uint32_t blockNum = currentInodePTR->directPointer[k];
+				if (blockNum != 0 && blockNum < TOTALBLOCKS)
+				{
+					blockRefCount[blockNum]++;
+				}
+			}
+
+			// Process indirect pointers (single, double, triple)
+			processIndirectReferences(fd, currentInodePTR->singleIndirectPointer, 1, blockRefCount);
+			processIndirectReferences(fd, currentInodePTR->doubleIndirectPointer, 2, blockRefCount);
+			processIndirectReferences(fd, currentInodePTR->tripleIndirectPointer, 3, blockRefCount);
+		}
+	}
+
+	// Second pass: Report duplicates
+	for (uint32_t blockNum = FIRSTDATABLOCKNUM; blockNum <= LASTDATABLOCKNUM; blockNum++)
+	{
+		if (blockRefCount[blockNum] > 1)
+		{
+			printf("Error: Block %u is referenced %d times (duplicate)\n",
+				   blockNum, blockRefCount[blockNum]);
+			error++;
+		}
+	}
+
+	printf("---------------------------------\n");
+	printf("Found %d duplicate block references\n", error);
+	printf("---------------------------------\n");
+
+	free(blockRefCount);
+	free(sbPTR);
+	close(fd);
+	return error;
+}
+
+// Helper function to process indirect references recursively
+void processIndirectReferences(int fd, uint32_t indirectBlock, int level, int *blockRefCount)
+{
+	if (indirectBlock == 0 || indirectBlock >= TOTALBLOCKS)
+	{
+		return;
+	}
+
+	uint32_t pointers[POINTERSPBLOCK];
+	readBlock(fd, indirectBlock, (unsigned char *)pointers);
+
+	for (int i = 0; i < POINTERSPBLOCK; i++)
+	{
+		uint32_t blockNum = pointers[i];
+		if (blockNum == 0)
+		{
+			continue;
+		}
+
+		if (level == 1)
+		{
+			// This is a data block
+			if (blockNum < TOTALBLOCKS)
+			{
+				blockRefCount[blockNum]++;
+			}
+		}
+		else
+		{
+			// This is another level of indirection
+			if (blockNum < TOTALBLOCKS)
+			{
+				blockRefCount[blockNum]++; // Count the indirect block itself
+				processIndirectReferences(fd, blockNum, level - 1, blockRefCount);
+			}
+		}
+	}
 }
