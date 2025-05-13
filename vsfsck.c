@@ -107,7 +107,8 @@ int main(int argc, char *argv[])
 {
 	if (argc != 2)
 	{
-		printf("Incorrect Usage.\nCorrect Format = %s <FILE.img>\n", argv[0]);
+		printf("Incorrect Usage.\nCorrect Format :   %s <FILE.img>\n", argv[0]);
+		printf("Try Running    :   cp vsfs-\\(backup\\).img vsfs.img && gcc -o checker vsfsck.c && ./checker vsfs.img\n");
 		return 1;
 	}
 
