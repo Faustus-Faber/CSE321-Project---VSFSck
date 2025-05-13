@@ -96,8 +96,7 @@ void fixDataBitmap(char *image);
 int validateInodeBitmap(char *image);
 void fixInodeBitmap(char *image);
 int validateAndFixBlockPointers(char *image);
-int detectDuplicateBlocks(char *image);
-void processIndirectReferences(int fd, uint32_t indirectBlockAddress, int level, int *blockRefCount);
+int detectAndFixDuplicateBlocks(char *image);
 
 // ! ############################## MAIN FUNCTION ##############################
 // * ############################## MAIN FUNCTION ##############################
@@ -169,14 +168,16 @@ int main(int argc, char *argv[])
 		printf("\n");
 	}
 
-	// ! SADIK
-	if (detectDuplicateBlocks(argv[1]) > 0)
+	// ! Sadik Mina Dweep
+	if (detectAndFixDuplicateBlocks(argv[1]) > 0)
 	{
-		printf("Duplicate blocks were found (potential corruption)\n");
+		printf("Duplicate block detection failed. Fixing errors...\n");
 	}
 	else
 	{
-		printf("No duplicate blocks found\n");
+		printf("Duplicate block detection successful. No errors found.\n");
+		printf("---------------------------------\n");
+		printf("\n");
 	}
 
 	return 0;
@@ -881,86 +882,23 @@ int validateAndFixBlockPointers(char *image)
 }
 
 // ! ############################## Sadik Mina Dweep ##############################
-// ? ############################## DUPLICATE BLOCK DETECTOR ##############################
 
-int detectDuplicateBlocks(char *image)
+// ? ############################## DUPLICATE BLOCK DETECTOR AND FIXER ##############################
+
+typedef struct
 {
-	int fd = open(image, O_RDONLY);
-	Superblock *sbPTR = (Superblock *)malloc(sizeof(Superblock));
-	readBlock(fd, SUPERBLOCKNUM, (unsigned char *)sbPTR);
+	uint32_t inode_num;
+	int pointer_type;  // 0-11: direct, 12: single, 13: double, 14: triple
+	int pointer_index; // index in pointer array
+	uint32_t block_num;
+} BlockReference;
 
-	printf("Checking for duplicate blocks\n");
-	printf("---------------------------------\n");
-
-	int error = 0;
-	unsigned char blockBuffer[BLOCKSIZE];
-	Inode *currentInodePTR;
-	uint32_t inodesPerBlock = sbPTR->blockSize / sbPTR->inodeSize;
-
-	// Create a reference count array for all blocks
-	int *blockRefCount = calloc(TOTALBLOCKS, sizeof(int));
-
-	// First pass: Count references to each block
-	for (uint32_t i = 0; i < INODETABNUMBLOCKS; i++)
-	{
-		uint32_t currentInodeTableBlockNum = sbPTR->itabStartBlock + i;
-		readBlock(fd, currentInodeTableBlockNum, blockBuffer);
-
-		for (uint32_t j = 0; j < inodesPerBlock; j++)
-		{
-			currentInodePTR = (Inode *)((blockBuffer + (j * sbPTR->inodeSize)));
-
-			// Skip invalid inodes
-			if (currentInodePTR->numHardLinks == 0 || currentInodePTR->deletionTime != 0)
-			{
-				continue;
-			}
-
-			// Check direct pointers
-			for (int k = 0; k < 12; k++)
-			{
-				uint32_t blockNum = currentInodePTR->directPointer[k];
-				if (blockNum != 0 && blockNum < TOTALBLOCKS)
-				{
-					blockRefCount[blockNum]++;
-				}
-			}
-
-			// Process indirect pointers (single, double, triple)
-			processIndirectReferences(fd, currentInodePTR->singleIndirectPointer, 1, blockRefCount);
-			processIndirectReferences(fd, currentInodePTR->doubleIndirectPointer, 2, blockRefCount);
-			processIndirectReferences(fd, currentInodePTR->tripleIndirectPointer, 3, blockRefCount);
-		}
-	}
-
-	// Second pass: Report duplicates
-	for (uint32_t blockNum = FIRSTDATABLOCKNUM; blockNum <= LASTDATABLOCKNUM; blockNum++)
-	{
-		if (blockRefCount[blockNum] > 1)
-		{
-			printf("Error: Block %u is referenced %d times (duplicate)\n",
-				   blockNum, blockRefCount[blockNum]);
-			error++;
-		}
-	}
-
-	printf("---------------------------------\n");
-	printf("Found %d duplicate block references\n", error);
-	printf("---------------------------------\n");
-
-	free(blockRefCount);
-	free(sbPTR);
-	close(fd);
-	return error;
-}
-
-// Helper function to process indirect references recursively
-void processIndirectReferences(int fd, uint32_t indirectBlock, int level, int *blockRefCount)
+// Helper to process indirect references recursively for duplicate detection
+static void processIndirectRefsForDup(int fd, uint32_t inodeNum, uint32_t indirectBlock,
+									  int ptrType, int ptrIndex, BlockReference *blockRefs, int *refCount)
 {
 	if (indirectBlock == 0 || indirectBlock >= TOTALBLOCKS)
-	{
 		return;
-	}
 
 	uint32_t pointers[POINTERSPBLOCK];
 	readBlock(fd, indirectBlock, (unsigned char *)pointers);
@@ -969,26 +907,193 @@ void processIndirectReferences(int fd, uint32_t indirectBlock, int level, int *b
 	{
 		uint32_t blockNum = pointers[i];
 		if (blockNum == 0)
-		{
 			continue;
-		}
 
-		if (level == 1)
+		if (ptrType == 12 || ptrType == 13 || ptrType == 14)
 		{
-			// This is a data block
-			if (blockNum < TOTALBLOCKS)
+			// Record the reference
+			blockRefs[blockNum * POINTERSPBLOCK + refCount[blockNum]] = (BlockReference){
+				inodeNum, ptrType, i, blockNum};
+			refCount[blockNum]++;
+
+			// Recurse if needed
+			if (ptrType == 13)
 			{
-				blockRefCount[blockNum]++;
+				processIndirectRefsForDup(fd, inodeNum, blockNum, ptrType, i, blockRefs, refCount);
 			}
-		}
-		else
-		{
-			// This is another level of indirection
-			if (blockNum < TOTALBLOCKS)
+			else if (ptrType == 14)
 			{
-				blockRefCount[blockNum]++; // Count the indirect block itself
-				processIndirectReferences(fd, blockNum, level - 1, blockRefCount);
+				processIndirectRefsForDup(fd, inodeNum, blockNum, 13, i, blockRefs, refCount);
 			}
 		}
 	}
+}
+
+// Helper to find first free block in data bitmap
+static uint32_t findFreeBlock(int fd, unsigned char *dataBitmap)
+{
+	for (uint32_t i = FIRSTDATABLOCKNUM; i <= LASTDATABLOCKNUM; i++)
+	{
+		int bitIndex = i - FIRSTDATABLOCKNUM;
+		if (!bitCheck(dataBitmap, bitIndex))
+		{
+			setBit(dataBitmap, bitIndex);
+			writeBlock(fd, DATABIMBLOCKNUM, dataBitmap); // Update bitmap on disk
+			return i;
+		}
+	}
+	return 0;
+}
+
+// Helper to update a specific block reference
+static void updateBlockReference(int fd, uint32_t inodeNum, int ptrType, int ptrIndex,
+								 uint32_t oldBlock, uint32_t newBlock)
+{
+	unsigned char blockBuffer[BLOCKSIZE];
+	uint32_t inodeBlock = INODETABSBLOCKNUM + (inodeNum / (BLOCKSIZE / INODESIZE));
+	uint32_t inodeOffset = (inodeNum % (BLOCKSIZE / INODESIZE)) * INODESIZE;
+
+	readBlock(fd, inodeBlock, blockBuffer);
+	Inode *inode = (Inode *)(blockBuffer + inodeOffset);
+
+	if (ptrType >= 0 && ptrType < 12)
+	{
+		// Direct pointer
+		inode->directPointer[ptrType] = newBlock;
+	}
+	else
+	{
+		// Indirect pointer
+		uint32_t indirectBlock = 0;
+		switch (ptrType)
+		{
+		case 12:
+			indirectBlock = inode->singleIndirectPointer;
+			break;
+		case 13:
+			indirectBlock = inode->doubleIndirectPointer;
+			break;
+		case 14:
+			indirectBlock = inode->tripleIndirectPointer;
+			break;
+		}
+
+		uint32_t pointers[POINTERSPBLOCK];
+		readBlock(fd, indirectBlock, (unsigned char *)pointers);
+		pointers[ptrIndex] = newBlock;
+		writeBlock(fd, indirectBlock, (unsigned char *)pointers);
+	}
+
+	writeBlock(fd, inodeBlock, blockBuffer);
+}
+
+int detectAndFixDuplicateBlocks(char *image)
+{
+	int fd = open(image, O_RDWR);
+	Superblock *sbPTR = (Superblock *)malloc(sizeof(Superblock));
+	readBlock(fd, SUPERBLOCKNUM, (unsigned char *)sbPTR);
+
+	printf("Checking and fixing duplicate blocks\n");
+	printf("---------------------------------\n");
+
+	int error = 0;
+	int fixed = 0;
+	unsigned char blockBuffer[BLOCKSIZE];
+	Inode *currentInodePTR;
+	uint32_t inodesPerBlock = sbPTR->blockSize / sbPTR->inodeSize;
+
+	// Create tracking structures
+	BlockReference *blockRefs = calloc(TOTALBLOCKS * POINTERSPBLOCK, sizeof(BlockReference));
+	int *refCount = calloc(TOTALBLOCKS, sizeof(int));
+	uint32_t *originalBlocks = calloc(TOTALBLOCKS, sizeof(uint32_t));
+
+	// First pass: Collect all block references
+	for (uint32_t i = 0; i < INODETABNUMBLOCKS; i++)
+	{
+		uint32_t currentInodeTableBlockNum = sbPTR->itabStartBlock + i;
+		readBlock(fd, currentInodeTableBlockNum, blockBuffer);
+
+		for (uint32_t j = 0; j < inodesPerBlock; j++)
+		{
+			uint32_t currentInodeNum = (i * inodesPerBlock) + j;
+			currentInodePTR = (Inode *)((blockBuffer + (j * sbPTR->inodeSize)));
+
+			// Skip invalid inodes
+			if (currentInodePTR->numHardLinks == 0 || currentInodePTR->deletionTime != 0)
+			{
+				continue;
+			}
+
+			// Process direct pointers
+			for (int k = 0; k < 12; k++)
+			{
+				uint32_t blockNum = currentInodePTR->directPointer[k];
+				if (blockNum != 0 && blockNum < TOTALBLOCKS)
+				{
+					blockRefs[blockNum * POINTERSPBLOCK + refCount[blockNum]] = (BlockReference){
+						currentInodeNum, k, -1, blockNum};
+					refCount[blockNum]++;
+				}
+			}
+
+			// Process indirect pointers
+			processIndirectRefsForDup(fd, currentInodeNum, currentInodePTR->singleIndirectPointer,
+									  12, -1, blockRefs, refCount);
+			processIndirectRefsForDup(fd, currentInodeNum, currentInodePTR->doubleIndirectPointer,
+									  13, -1, blockRefs, refCount);
+			processIndirectRefsForDup(fd, currentInodeNum, currentInodePTR->tripleIndirectPointer,
+									  14, -1, blockRefs, refCount);
+		}
+	}
+
+	// Second pass: Find and fix duplicates
+	unsigned char dataBitmap[BLOCKSIZE];
+	readBlock(fd, DATABIMBLOCKNUM, dataBitmap);
+
+	for (uint32_t blockNum = FIRSTDATABLOCKNUM; blockNum <= LASTDATABLOCKNUM; blockNum++)
+	{
+		if (refCount[blockNum] > 1)
+		{
+			printf("Duplicate: Block %u referenced %d times\n", blockNum, refCount[blockNum]);
+			error++;
+
+			// Keep first reference, fix others
+			for (int dup = 1; dup < refCount[blockNum]; dup++)
+			{
+				BlockReference ref = blockRefs[blockNum * POINTERSPBLOCK + dup];
+
+				// Allocate new block
+				uint32_t newBlock = findFreeBlock(fd, dataBitmap);
+				if (newBlock == 0)
+				{
+					printf("Error: No free blocks available to fix duplicate\n");
+					continue;
+				}
+
+				// Copy data from original block to new block
+				unsigned char data[BLOCKSIZE];
+				readBlock(fd, blockNum, data);
+				writeBlock(fd, newBlock, data);
+
+				// Update reference to point to new block
+				updateBlockReference(fd, ref.inode_num, ref.pointer_type,
+									 ref.pointer_index, blockNum, newBlock);
+
+				printf("Fixed: Replaced reference (inode %u) with new block %u\n",
+					   ref.inode_num, newBlock);
+				fixed++;
+			}
+		}
+	}
+
+	printf("---------------------------------\n");
+	printf("Found %d duplicate blocks, fixed %d references\n", error, fixed);
+	printf("---------------------------------\n");
+
+	free(blockRefs);
+	free(refCount);
+	free(originalBlocks);
+	free(sbPTR);
+	close(fd);
+	return error;
 }
