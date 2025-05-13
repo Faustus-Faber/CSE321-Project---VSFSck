@@ -95,6 +95,7 @@ int validateDataBitmap(char *image);
 void fixDataBitmap(char *image);
 int validateInodeBitmap(char *image);
 void fixInodeBitmap(char *image);
+int validateAndFixBlockPointers(char *image);
 
 // ? ############################## MAIN FUNCTION ##############################
 
@@ -152,7 +153,16 @@ int main(int argc, char *argv[])
 	}
 
 	// ! Al- Saihan Tajvi
-
+	if (validateAndFixBlockPointers(argv[1]) > 0)
+	{
+		printf("Bad block pointer validation failed.\n");
+	}
+	else
+	{
+		printf("Bad block pointer validation successful. No errors found.\n");
+		printf("---------------------------------\n");
+		printf("\n");
+	}
 	return 0;
 }
 
@@ -586,4 +596,270 @@ void fixInodeBitmap(char *image)
 	free(sbPTR);
 	close(fd);
 	printf("Fixed all inode bitmap errors. Please rerun the checker to verify.\n");
+}
+
+// ? ############################## BAD BLOCK CHECKER + FIXER ##############################
+
+int validateAndFixBlockPointers(char *image)
+{
+	int fd = open(image, O_RDWR); // Need read-write for fixing
+	Superblock *sbPTR = (Superblock *)malloc(sizeof(Superblock));
+	readBlock(fd, SUPERBLOCKNUM, (unsigned char *)sbPTR);
+
+	printf("Checking and fixing bad block pointers\n");
+	printf("---------------------------------\n");
+
+	int error = 0;
+	int fixed = 0;
+	unsigned char blockBuffer[BLOCKSIZE];
+	Inode *currentInodePTR;
+	uint32_t inodesPerBlock = sbPTR->blockSize / sbPTR->inodeSize;
+
+	// Scan all inodes in the inode table
+	for (uint32_t i = 0; i < INODETABNUMBLOCKS; i++)
+	{
+		uint32_t currentInodeTableBlockNum = sbPTR->itabStartBlock + i;
+		readBlock(fd, currentInodeTableBlockNum, blockBuffer);
+
+		for (uint32_t j = 0; j < inodesPerBlock; j++)
+		{
+			uint32_t currentInodeNum = (i * inodesPerBlock) + j;
+			currentInodePTR = (Inode *)((blockBuffer + (j * sbPTR->inodeSize)));
+			int inodeModified = 0;
+
+			// Check direct pointers
+			for (int k = 0; k < 12; k++)
+			{
+				uint32_t blockNum = currentInodePTR->directPointer[k];
+				if (blockNum != 0 && (blockNum < FIRSTDATABLOCKNUM || blockNum > LASTDATABLOCKNUM))
+				{
+					printf("Error: Inode %u has bad direct pointer %u (block %u). Fixing by nulling pointer.\n",
+						   currentInodeNum, k, blockNum);
+					currentInodePTR->directPointer[k] = 0;
+					inodeModified = 1;
+					error++;
+					fixed++;
+				}
+			}
+
+			// Check single indirect pointer
+			if (currentInodePTR->singleIndirectPointer != 0)
+			{
+				if (currentInodePTR->singleIndirectPointer < FIRSTDATABLOCKNUM ||
+					currentInodePTR->singleIndirectPointer > LASTDATABLOCKNUM)
+				{
+					printf("Error: Inode %u has bad single indirect pointer (block %u). Fixing by nulling pointer.\n",
+						   currentInodeNum, currentInodePTR->singleIndirectPointer);
+					currentInodePTR->singleIndirectPointer = 0;
+					inodeModified = 1;
+					error++;
+					fixed++;
+				}
+				else
+				{
+					// Check pointers in the indirect block
+					uint32_t indirectBlock[POINTERSPBLOCK];
+					readBlock(fd, currentInodePTR->singleIndirectPointer, (unsigned char *)indirectBlock);
+					int blockModified = 0;
+
+					for (int k = 0; k < POINTERSPBLOCK; k++)
+					{
+						if (indirectBlock[k] != 0 &&
+							(indirectBlock[k] < FIRSTDATABLOCKNUM || indirectBlock[k] > LASTDATABLOCKNUM))
+						{
+							printf("Error: Inode %u has bad single-indirect pointer %u (block %u). Fixing by nulling pointer.\n",
+								   currentInodeNum, k, indirectBlock[k]);
+							indirectBlock[k] = 0;
+							blockModified = 1;
+							error++;
+							fixed++;
+						}
+					}
+
+					if (blockModified)
+					{
+						writeBlock(fd, currentInodePTR->singleIndirectPointer, (unsigned char *)indirectBlock);
+					}
+				}
+			}
+
+			// ? Check double indirect pointer
+			if (currentInodePTR->doubleIndirectPointer != 0)
+			{
+				if (currentInodePTR->doubleIndirectPointer < FIRSTDATABLOCKNUM ||
+					currentInodePTR->doubleIndirectPointer > LASTDATABLOCKNUM)
+				{
+					printf("Error: Inode %u has bad double indirect pointer (block %u). Fixing by nulling pointer.\n",
+						   currentInodeNum, currentInodePTR->doubleIndirectPointer);
+					currentInodePTR->doubleIndirectPointer = 0;
+					inodeModified = 1;
+					error++;
+					fixed++;
+				}
+				else
+				{
+					// ? Check second level pointers
+					uint32_t firstLevel[POINTERSPBLOCK];
+					readBlock(fd, currentInodePTR->doubleIndirectPointer, (unsigned char *)firstLevel);
+					int firstLevelModified = 0;
+
+					for (int k = 0; k < POINTERSPBLOCK; k++)
+					{
+						if (firstLevel[k] != 0)
+						{
+							if (firstLevel[k] < FIRSTDATABLOCKNUM || firstLevel[k] > LASTDATABLOCKNUM)
+							{
+								printf("Error: Inode %u has bad double-indirect first-level pointer %u (block %u). Fixing by nulling pointer.\n",
+									   currentInodeNum, k, firstLevel[k]);
+								firstLevel[k] = 0;
+								firstLevelModified = 1;
+								error++;
+								fixed++;
+							}
+							else
+							{
+								// ? Check third level pointers
+								uint32_t secondLevel[POINTERSPBLOCK];
+								readBlock(fd, firstLevel[k], (unsigned char *)secondLevel);
+								int secondLevelModified = 0;
+
+								for (int l = 0; l < POINTERSPBLOCK; l++)
+								{
+									if (secondLevel[l] != 0 &&
+										(secondLevel[l] < FIRSTDATABLOCKNUM || secondLevel[l] > LASTDATABLOCKNUM))
+									{
+										printf("Error: Inode %u has bad double-indirect second-level pointer %u (block %u). Fixing by nulling pointer.\n",
+											   currentInodeNum, l, secondLevel[l]);
+										secondLevel[l] = 0;
+										secondLevelModified = 1;
+										error++;
+										fixed++;
+									}
+								}
+
+								if (secondLevelModified)
+								{
+									writeBlock(fd, firstLevel[k], (unsigned char *)secondLevel);
+								}
+							}
+						}
+					}
+
+					if (firstLevelModified)
+					{
+						writeBlock(fd, currentInodePTR->doubleIndirectPointer, (unsigned char *)firstLevel);
+					}
+				}
+			}
+
+			// ? Check triple indirect pointer
+			if (currentInodePTR->tripleIndirectPointer != 0)
+			{
+				if (currentInodePTR->tripleIndirectPointer < FIRSTDATABLOCKNUM ||
+					currentInodePTR->tripleIndirectPointer > LASTDATABLOCKNUM)
+				{
+					printf("Error: Inode %u has bad triple indirect pointer (block %u). Fixing by nulling pointer.\n",
+						   currentInodeNum, currentInodePTR->tripleIndirectPointer);
+					currentInodePTR->tripleIndirectPointer = 0;
+					inodeModified = 1;
+					error++;
+					fixed++;
+				}
+				else
+				{
+					// ? Check second level pointers
+					uint32_t firstLevel[POINTERSPBLOCK];
+					readBlock(fd, currentInodePTR->tripleIndirectPointer, (unsigned char *)firstLevel);
+					int firstLevelModified = 0;
+
+					for (int k = 0; k < POINTERSPBLOCK; k++)
+					{
+						if (firstLevel[k] != 0)
+						{
+							if (firstLevel[k] < FIRSTDATABLOCKNUM || firstLevel[k] > LASTDATABLOCKNUM)
+							{
+								printf("Error: Inode %u has bad triple-indirect first-level pointer %u (block %u). Fixing by nulling pointer.\n",
+									   currentInodeNum, k, firstLevel[k]);
+								firstLevel[k] = 0;
+								firstLevelModified = 1;
+								error++;
+								fixed++;
+							}
+							else
+							{
+								// ? Check third level pointers
+								uint32_t secondLevel[POINTERSPBLOCK];
+								readBlock(fd, firstLevel[k], (unsigned char *)secondLevel);
+								int secondLevelModified = 0;
+
+								for (int l = 0; l < POINTERSPBLOCK; l++)
+								{
+									if (secondLevel[l] != 0)
+									{
+										if (secondLevel[l] < FIRSTDATABLOCKNUM || secondLevel[l] > LASTDATABLOCKNUM)
+										{
+											printf("Error: Inode %u has bad triple-indirect second-level pointer %u (block %u). Fixing by nulling pointer.\n",
+												   currentInodeNum, l, secondLevel[l]);
+											secondLevel[l] = 0;
+											secondLevelModified = 1;
+											error++;
+											fixed++;
+										}
+										else
+										{
+											// ? Check fourth level pointers
+											uint32_t thirdLevel[POINTERSPBLOCK];
+											readBlock(fd, secondLevel[l], (unsigned char *)thirdLevel);
+											int thirdLevelModified = 0;
+
+											for (int m = 0; m < POINTERSPBLOCK; m++)
+											{
+												if (thirdLevel[m] != 0 &&
+													(thirdLevel[m] < FIRSTDATABLOCKNUM || thirdLevel[m] > LASTDATABLOCKNUM))
+												{
+													printf("Error: Inode %u has bad triple-indirect third-level pointer %u (block %u). Fixing by nulling pointer.\n",
+														   currentInodeNum, m, thirdLevel[m]);
+													thirdLevel[m] = 0;
+													thirdLevelModified = 1;
+													error++;
+													fixed++;
+												}
+											}
+
+											if (thirdLevelModified)
+											{
+												writeBlock(fd, secondLevel[l], (unsigned char *)thirdLevel);
+											}
+										}
+									}
+								}
+
+								if (secondLevelModified)
+								{
+									writeBlock(fd, firstLevel[k], (unsigned char *)secondLevel);
+								}
+							}
+						}
+					}
+
+					if (firstLevelModified)
+					{
+						writeBlock(fd, currentInodePTR->tripleIndirectPointer, (unsigned char *)firstLevel);
+					}
+				}
+			}
+
+			if (inodeModified)
+			{
+				// ? Write back the modified inode
+				writeBlock(fd, currentInodeTableBlockNum, blockBuffer);
+			}
+		}
+	}
+
+	printf("Found %d bad block pointers, fixed %d\n", error, fixed);
+	printf("---------------------------------\n");
+	free(sbPTR);
+	close(fd);
+	return error;
 }
