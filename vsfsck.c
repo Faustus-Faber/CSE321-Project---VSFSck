@@ -632,7 +632,7 @@ int validateAndFixBlockPointers(char *image)
 	Inode *currentInodePTR;
 	uint32_t inodesPerBlock = sbPTR->blockSize / sbPTR->inodeSize;
 
-	// Scan all inodes in the inode table
+	// ? Scan all inodes in the inode table
 	for (uint32_t i = 0; i < INODETABNUMBLOCKS; i++)
 	{
 		uint32_t currentInodeTableBlockNum = sbPTR->itabStartBlock + i;
@@ -644,7 +644,7 @@ int validateAndFixBlockPointers(char *image)
 			currentInodePTR = (Inode *)((blockBuffer + (j * sbPTR->inodeSize)));
 			int inodeModified = 0;
 
-			// Check direct pointers
+			// ? Check direct pointers
 			for (int k = 0; k < 12; k++)
 			{
 				uint32_t blockNum = currentInodePTR->directPointer[k];
@@ -659,7 +659,7 @@ int validateAndFixBlockPointers(char *image)
 				}
 			}
 
-			// Check single indirect pointer
+			// ? Check single indirect pointer
 			if (currentInodePTR->singleIndirectPointer != 0)
 			{
 				if (currentInodePTR->singleIndirectPointer < FIRSTDATABLOCKNUM ||
