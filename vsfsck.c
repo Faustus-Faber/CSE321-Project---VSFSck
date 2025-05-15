@@ -674,7 +674,7 @@ int validateAndFixBlockPointers(char *image)
 				}
 				else
 				{
-					// Check pointers in the indirect block
+					// ? Check pointers in the indirect block
 					uint32_t indirectBlock[POINTERSPBLOCK];
 					readBlock(fd, currentInodePTR->singleIndirectPointer, (unsigned char *)indirectBlock);
 					int blockModified = 0;
